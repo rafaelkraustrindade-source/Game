@@ -86,7 +86,8 @@ class Player : Body
     const float FlaskHeal = 40f;
 
     enum State { Free, Roll, Attack, Heal }
-public float Stamina = MaxStamina;
+
+    public float Stamina = MaxStamina;
     public int Flasks = 3;
     public int Souls;
 
