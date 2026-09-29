@@ -1,0 +1,6 @@
+local nome 
+local jogo 
+local idade 
+nome = "Rafael"
+jogo = "Cuphead"
+idade = "13"
