@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Jogo medieval")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+771c7055b82081fe42ec3bfc9d097bdd61f6e411")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8b8648a72fa7607c2dbe889dedee60cab84c233b")]
 [assembly: System.Reflection.AssemblyProductAttribute("Jogo medieval")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Jogo medieval")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

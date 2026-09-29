@@ -14,14 +14,17 @@ class Game
 {
     public const int ScreenW = 1280;
     public const int ScreenH = 720;
+    const string LevelPath = "Assets/level1.json";
 
     public float Now;
     public Player Player = null!;
+    public LevelData Level = null!;
     public List<Enemy> Enemies = new();
     public List<Rectangle> Solids = new();
     public List<Effect> Effects = new();
 
     float deadFor;
+    bool showCollision;   // F1 liga/desliga
 
     public Game() => Reset();
 
@@ -33,22 +36,27 @@ class Game
         Solids.Clear();
         Effects.Clear();
 
-        // ---- MAPA (x, y, largura, altura) ----
-        Solids.Add(new Rectangle(-800, 500, 3000, 300));   // chão
-        Solids.Add(new Rectangle(-840, -300, 40, 800));    // parede esquerda
-        Solids.Add(new Rectangle(2200, -300, 40, 800));    // parede direita
-        Solids.Add(new Rectangle(300, 390, 200, 20));      // plataformas
-        Solids.Add(new Rectangle(560, 300, 160, 20));
-        Solids.Add(new Rectangle(1100, 390, 240, 20));
+        // ---- MAPA vem do Tiled ----
+        Level = TiledLoader.Load(LevelPath);
+        Solids.AddRange(Level.Solids);
 
-        // ---- PLAYER ----
-        Player = new Player(-600, 440);
-
-        // ---- INIMIGOS ----
-        Enemies.Add(new Enemy(this, 100, 440));
-        Enemies.Add(new Enemy(this, 800, 440));
-        Enemies.Add(new Enemy(this, 1200, 330));
-        Enemies.Add(new Enemy(this, 1700, 420, boss: true)); // mini-boss
+        // ---- SPAWNS: o ponto (x,y) do Tiled é onde os PÉS da entidade ficam ----
+        Player = new Player(100, 100); // provisório, ajustado abaixo
+        foreach (var s in Level.Spawns)
+        {
+            switch (s.Kind)
+            {
+                case "PlayerSpawn":
+                    Player = new Player(s.X - 14, s.Y - 56);              // player 28x56
+                    break;
+                case "Enemy":
+                    Enemies.Add(new Enemy(this, s.X - 16, s.Y - 56));     // inimigo 32x56
+                    break;
+                case "Boss":
+                    Enemies.Add(new Enemy(this, s.X - 23, s.Y - 80, boss: true)); // boss 46x80
+                    break;
+            }
+        }
     }
 
     public void AddEffect(Rectangle r, Color c, float duration)
@@ -59,8 +67,16 @@ class Game
     {
         Now += dt;
 
+        if (Raylib.IsKeyPressed(KeyboardKey.F1)) showCollision = !showCollision;
+
         Player.Update(this, dt);
         foreach (var e in Enemies) e.Update(this, dt);
+
+        // caiu do mapa = morreu
+        float killY = Level.PixelHeight + 300;
+        if (Player.Y > killY && !Player.Dead) { Player.HP = 0; Player.Dead = true; }
+        foreach (var e in Enemies)
+            if (e.Y > killY && !e.Dead) { e.HP = 0; e.Dead = true; }
 
         Enemies.RemoveAll(e => e.Dead && e.DeadTimer > 1f);
         Effects.RemoveAll(e => Now > e.ExpireAt);
@@ -73,16 +89,32 @@ class Game
         return false;
     }
 
-    public void DrawWorld()
+    public void DrawWorld(Camera2D cam)
     {
-        foreach (var s in Solids)
-            Raylib.DrawRectangleRec(s, new Color(64, 56, 51, 255));
+        // área visível do mundo (pra só desenhar os tiles que aparecem)
+        var view = new Rectangle(
+            cam.Target.X - cam.Offset.X / cam.Zoom,
+            cam.Target.Y - cam.Offset.Y / cam.Zoom,
+            ScreenW / cam.Zoom, ScreenH / cam.Zoom);
+
+        if (Level.HasArt)
+            Level.Draw(view, foreground: false);
+        else
+            foreach (var s in Solids)
+                Raylib.DrawRectangleRec(s, new Color(64, 56, 51, 255));
 
         foreach (var e in Enemies) e.Draw(Now);
         Player.Draw(Now);
 
         foreach (var fx in Effects)
             Raylib.DrawRectangleRec(fx.Rect, fx.Color);
+
+        if (Level.HasArt)
+            Level.Draw(view, foreground: true);   // camadas "fg..." por cima de tudo
+
+        if (showCollision)
+            foreach (var s in Solids)
+                Raylib.DrawRectangleLinesEx(s, 1f, new Color(0, 255, 0, 200));
     }
 
     public void DrawHud()
@@ -97,7 +129,7 @@ class Game
         Raylib.DrawRectangle(20, 48, (int)(220 * (p.Stamina / Player.MaxStamina)), 12, new Color(50, 200, 80, 255));
 
         Raylib.DrawText($"Frascos: {p.Flasks}    Almas: {p.Souls}", 20, 70, 20, Color.White);
-        Raylib.DrawText("A/D mover | Espaco pular | Shift rolar | J atacar | Q curar",
+        Raylib.DrawText("A/D mover | Espaco pular | Shift rolar | J atacar | Q curar | F1 colisao",
             20, ScreenH - 30, 18, Color.LightGray);
 
         if (p.Dead)
