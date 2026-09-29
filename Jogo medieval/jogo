@@ -1,0 +1,357 @@
+using System.Numerics;
+using Raylib_cs;
+
+/// Base de qualquer coisa que tem corpo, vida e física.
+abstract class Body
+{
+    public const float Gravity = 1800f;
+
+    public float X, Y, W, H;
+    public Vector2 Vel;
+    public bool OnGround;
+    public float HP, MaxHP;
+    public bool Invincible, Dead;
+    public float StunUntil, FlashUntil;
+    public int Facing = 1;
+    public Color BaseColor = Color.White;
+
+    public Rectangle Rect => new Rectangle(X, Y, W, H);
+    public Vector2 Center => new Vector2(X + W / 2f, Y + H / 2f);
+
+    public void MoveAndCollide(float dt, List<Rectangle> solids)
+    {
+        // eixo X
+        X += Vel.X * dt;
+        var rx = new Rectangle(X, Y + 0.5f, W, H - 1f);
+        foreach (var s in solids)
+        {
+            if (!Raylib.CheckCollisionRecs(rx, s)) continue;
+            if (Vel.X > 0) X = s.X - W;
+            else if (Vel.X < 0) X = s.X + s.Width;
+            rx = new Rectangle(X, Y + 0.5f, W, H - 1f);
+        }
+
+        // eixo Y
+        Y += Vel.Y * dt;
+        OnGround = false;
+        foreach (var s in solids)
+        {
+            if (!Raylib.CheckCollisionRecs(Rect, s)) continue;
+            if (Vel.Y > 0) { Y = s.Y - H; OnGround = true; Vel.Y = 0; }
+            else if (Vel.Y < 0) { Y = s.Y + s.Height; Vel.Y = 0; }
+        }
+    }
+
+    public bool TakeDamage(float dmg, float fromX, float now, float stun = 0.25f)
+    {
+        if (Dead || Invincible) return false;
+
+        HP -= dmg;
+        StunUntil = now + stun;
+        FlashUntil = now + 0.1f;
+
+        float dir = Center.X >= fromX ? 1f : -1f;
+        Vel = new Vector2(dir * 260f, -220f);   // knockback
+        OnGround = false;
+
+        if (HP <= 0) { HP = 0; Dead = true; }
+        return true;
+    }
+
+    protected void DrawBody(float now, Color color)
+    {
+        Color c = Dead ? Color.Gray : (now < FlashUntil ? Color.Red : color);
+        Raylib.DrawRectangleRec(Rect, c);
+        // "olho" pra mostrar pra onde está virado
+        int ex = Facing > 0 ? (int)(X + W - 12) : (int)(X + 2);
+        Raylib.DrawRectangle(ex, (int)Y + 10, 10, 6, Color.White);
+    }
+}
+
+// =====================================================================
+
+class Player : Body
+{
+    // Ajuste à vontade
+    const float MoveSpeed = 260f;
+    const float JumpVel = 720f;
+    const float RollSpeed = 480f;
+    const float RollTime = 0.35f;
+    public const float MaxStamina = 100f;
+    const float StaminaRegen = 35f;
+    const float RollCost = 25f;
+    const float AttackCost = 20f;
+    const float AttackDamage = 25f;
+    const float AttackRange = 70f;
+    const float FlaskHeal = 40f;
+
+    enum State { Free, Roll, Attack, Heal }
+
+    public float Stamina = MaxStamina;
+    public int Flasks = 3;
+    public int Souls;
+
+    State state = State.Free;
+    float timer;
+    int attackPhase;
+    float lastStaminaUse;
+
+    public Player(float x, float y)
+    {
+        X = x; Y = y; W = 28; H = 56;
+        MaxHP = HP = 100;
+        BaseColor = new Color(76, 178, 255, 255);
+    }
+
+    void UseStamina(float amount, float now)
+    {
+        Stamina = MathF.Max(0, Stamina - amount);
+        lastStaminaUse = now;
+    }
+
+    public void Update(Game g, float dt)
+    {
+        float now = g.Now;
+
+        if (Dead)
+        {
+            Vel.X *= 0.9f;
+            Vel.Y += Gravity * dt;
+            MoveAndCollide(dt, g.Solids);
+            return;
+        }
+
+        bool stunned = now < StunUntil;
+        if (stunned && (state == State.Attack || state == State.Heal))
+            state = State.Free; // tomou dano: cancela a ação
+
+        float axis = 0;
+        if (Raylib.IsKeyDown(KeyboardKey.D) || Raylib.IsKeyDown(KeyboardKey.Right)) axis += 1;
+        if (Raylib.IsKeyDown(KeyboardKey.A) || Raylib.IsKeyDown(KeyboardKey.Left)) axis -= 1;
+
+        switch (state)
+        {
+            case State.Free:
+                if (stunned)
+                {
+                    Vel.X -= Vel.X * 8f * dt;
+                    break;
+                }
+
+                Vel.X = axis * MoveSpeed;
+                if (axis != 0) Facing = (int)axis;
+
+                if (Raylib.IsKeyPressed(KeyboardKey.Space) && OnGround)
+                    Vel.Y = -JumpVel;
+
+                if ((Raylib.IsKeyPressed(KeyboardKey.LeftShift) || Raylib.IsKeyPressed(KeyboardKey.K)) && Stamina > 0)
+                {
+                    state = State.Roll;
+                    timer = RollTime;
+                    Invincible = true;
+                    UseStamina(RollCost, now);
+                }
+                else if ((Raylib.IsKeyPressed(KeyboardKey.J) || Raylib.IsMouseButtonPressed(MouseButton.Left)) && Stamina > 0)
+                {
+                    state = State.Attack;
+                    attackPhase = 0;
+                    timer = 0.12f; // windup
+                    UseStamina(AttackCost, now);
+                }
+                else if (Raylib.IsKeyPressed(KeyboardKey.Q) && Flasks > 0 && HP < MaxHP)
+                {
+                    state = State.Heal;
+                    timer = 0.6f;
+                }
+                break;
+
+            case State.Roll:
+                Vel.X = Facing * RollSpeed;
+                timer -= dt;
+                if (timer <= 0) { Invincible = false; state = State.Free; }
+                break;
+
+            case State.Attack:
+                Vel.X = 0;
+                timer -= dt;
+                if (attackPhase == 0 && timer <= 0)
+                {
+                    DoHit(g);
+                    attackPhase = 1;
+                    timer = 0.25f; // recovery
+                }
+                else if (attackPhase == 1 && timer <= 0) state = State.Free;
+                break;
+
+            case State.Heal:
+                Vel.X = 0;
+                timer -= dt;
+                if (timer <= 0)
+                {
+                    Flasks--;
+                    HP = MathF.Min(MaxHP, HP + FlaskHeal);
+                    state = State.Free;
+                }
+                break;
+        }
+
+        // regen de stamina
+        if (state == State.Free && now > lastStaminaUse + 0.8f)
+            Stamina = MathF.Min(MaxStamina, Stamina + StaminaRegen * dt);
+
+        Vel.Y += Gravity * dt;
+        MoveAndCollide(dt, g.Solids);
+    }
+
+    void DoHit(Game g)
+    {
+        var hit = new Rectangle(
+            Facing > 0 ? X + W : X - AttackRange,
+            Y - 4, AttackRange, H + 8);
+        g.AddEffect(hit, new Color(255, 255, 255, 110), 0.1f);
+
+        foreach (var e in g.Enemies)
+        {
+            if (e.Dead || !Raylib.CheckCollisionRecs(hit, e.Rect)) continue;
+            e.TakeDamage(AttackDamage, Center.X, g.Now);
+            if (e.Dead) Souls += e.SoulsReward;
+        }
+    }
+
+    public void Draw(float now)
+    {
+        Color c = state == State.Roll ? new Color(76, 178, 255, 100)
+                : state == State.Heal ? Color.Green
+                : BaseColor;
+        DrawBody(now, c);
+    }
+}
+
+// =====================================================================
+
+class Enemy : Body
+{
+    enum State { Move, Windup, Recover }
+
+    readonly float speed = 130f;
+    readonly float detectRange = 450f;
+    readonly float attackRange = 60f;
+    readonly float patrolRange = 150f;
+    readonly float damage;
+    readonly float windupTime = 0.6f;   // tempo que ele "telegrafa" o golpe (amarelo)
+    readonly float recoverTime = 0.9f;
+    public int SoulsReward = 50;
+    public float DeadTimer;
+
+    readonly Game game;
+    readonly float originX;
+    State state = State.Move;
+    float timer;
+
+    public Enemy(Game game, float x, float y, bool boss = false)
+    {
+        this.game = game;
+        X = x; Y = y;
+        originX = x;
+        if (boss)
+        {
+            W = 46; H = 80; MaxHP = HP = 200; damage = 35; SoulsReward = 300;
+            BaseColor = new Color(140, 40, 160, 255);
+        }
+        else
+        {
+            W = 32; H = 56; MaxHP = HP = 60; damage = 20;
+            BaseColor = new Color(204, 76, 76, 255);
+        }
+    }
+
+    public void Update(Game g, float dt)
+    {
+        float now = g.Now;
+        var p = g.Player;
+
+        if (Dead)
+        {
+            DeadTimer += dt;
+            Vel.X *= 0.9f;
+            Vel.Y += Gravity * dt;
+            MoveAndCollide(dt, g.Solids);
+            return;
+        }
+
+        bool stunned = now < StunUntil;
+        if (stunned && state != State.Move) state = State.Move; // stagger cancela o ataque
+
+        if (stunned)
+        {
+            Vel.X -= Vel.X * 8f * dt;
+        }
+        else
+        {
+            switch (state)
+            {
+                case State.Move:
+                    float dx = p.Center.X - Center.X;
+                    float dy = MathF.Abs(p.Center.Y - Center.Y);
+                    bool sees = MathF.Abs(dx) < detectRange && dy < 130 && !p.Dead;
+
+                    if (sees)
+                    {
+                        Facing = dx >= 0 ? 1 : -1;
+                        if (MathF.Abs(dx) > attackRange)
+                            Vel.X = Facing * speed * 1.3f;
+                        else
+                        {
+                            Vel.X = 0;
+                            state = State.Windup;
+                            timer = windupTime;
+                        }
+                    }
+                    else
+                    {
+                        if (MathF.Abs(Center.X - originX) > patrolRange)
+                            Facing = originX >= Center.X ? 1 : -1;
+                        Vel.X = Facing * speed * 0.5f;
+                    }
+                    break;
+
+                case State.Windup:
+                    Vel.X = 0;
+                    timer -= dt;
+                    if (timer <= 0)
+                    {
+                        Strike(g);
+                        state = State.Recover;
+                        timer = recoverTime;
+                    }
+                    break;
+
+                case State.Recover:
+                    Vel.X = 0;
+                    timer -= dt;
+                    if (timer <= 0) state = State.Move;
+                    break;
+            }
+        }
+
+        Vel.Y += Gravity * dt;
+        MoveAndCollide(dt, g.Solids);
+    }
+
+    void Strike(Game g)
+    {
+        var hit = new Rectangle(
+            Facing > 0 ? X + W : X - attackRange,
+            Y - 4, attackRange, H + 8);
+        g.AddEffect(hit, new Color(255, 80, 30, 150), 0.12f);
+
+        if (Raylib.CheckCollisionRecs(hit, g.Player.Rect))
+            g.Player.TakeDamage(damage, Center.X, g.Now, 0.3f);
+    }
+
+    public void Draw(float now)
+    {
+        // amarelo = vai atacar! hora de rolar
+        DrawBody(now, state == State.Windup ? Color.Yellow : BaseColor);
+    }
+}
